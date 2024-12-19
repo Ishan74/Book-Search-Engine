@@ -1,60 +1,55 @@
 import express from 'express';
 import path from 'node:path';
+import type { Request, Response } from 'express';
+// Import the ApolloServer class
+import {
+  ApolloServer,
+} from '@apollo/server';
+import {
+  expressMiddleware
+} from '@apollo/server/express4';
+import { authenticateToken } from './services/auth-service.js';
+// Import the two parts of a GraphQL schema
+import { typeDefs, resolvers } from './schemas/index.js';
 import db from './config/connection.js';
-import routes from './routes/index.js';
-import { ApolloServer } from '@apollo/server';
-import { expressMiddleware } from '@apollo/server/express4';
-import { typeDefs } from './graphql/typeDefs.js'; // Define your typeDefs
-import { resolvers } from './graphql/resolvers.js'; // Define your resolvers
-import dotenv from 'dotenv';
 
-dotenv.config();
 
-const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Middleware for parsing requests
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-// Static assets for production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-}
-
-// Apollo Server setup
 const server = new ApolloServer({
   typeDefs,
   resolvers,
 });
 
-await server.start();
+const app = express();
 
-app.use(
-  '/graphql',
-  expressMiddleware(server, {
-    context: async ({ req }) => {
-      // Attach user to the context for authentication
-      const token = req.headers.authorization?.split(' ')[1];
-      let user = null;
-      if (token) {
-        try {
-          const secretKey = process.env.JWT_SECRET_KEY || '';
-          user = jwt.verify(token, secretKey);
-        } catch (err) {
-          console.error('Invalid token');
-        }
-      }
-      return { user };
-    },
-  })
-);
+// Create a new instance of an Apollo server with the GraphQL schema
+const startApolloServer = async () => {
+  await server.start();
+  await db;
 
-// Rest API routes
-app.use(routes);
+  app.use(express.urlencoded({ extended: false }));
+  app.use(express.json());
 
-// Connect to the database and start the server
-db.once('open', () => {
-  app.listen(PORT, () => console.log(`🌍 Now listening on localhost:${PORT}\n🚀 GraphQL at http://localhost:${PORT}/graphql`));
-});
+  app.use('/graphql', expressMiddleware(server as any,
+    {
+      context: authenticateToken as any
+    }
+  ));
 
+  if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(path.join(__dirname, '../client/dist')));
+
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+    });
+  }
+
+  app.listen(PORT, () => {
+    console.log(`API server running on port ${PORT}!`);
+    console.log(`Use GraphQL at http://localhost:${PORT}/graphql`);
+  });
+
+};
+
+// Call the async function to start the server
+startApolloServer();
